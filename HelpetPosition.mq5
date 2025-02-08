@@ -121,3 +121,143 @@ void OnStart()
     int closedPositions = CloseAllPositionsForSymbol(symbol);
     Print("Closed Positions for ", symbol, ": ", closedPositions);
 }
+
+#include <Trade\PositionInfo.mqh>
+
+// Fungsi untuk mendapatkan total swap dari semua posisi terbuka untuk simbol tertentu
+double GetTotalSwapForSymbol(const string symbol)
+{
+    CPositionInfo positionInfo;
+    double totalSwap = 0.0;
+    int totalPositions = PositionsTotal();
+
+    for (int i = 0; i < totalPositions; i++)
+    {
+        if (positionInfo.SelectByIndex(i) && positionInfo.Symbol() == symbol)
+        {
+            totalSwap += positionInfo.Swap();
+        }
+    }
+
+    return totalSwap;
+}
+
+// Fungsi untuk mendapatkan total komisi dari semua posisi terbuka untuk simbol tertentu
+double GetTotalCommissionForSymbol(const string symbol)
+{
+    CPositionInfo positionInfo;
+    double totalCommission = 0.0;
+    int totalPositions = PositionsTotal();
+
+    for (int i = 0; i < totalPositions; i++)
+    {
+        if (positionInfo.SelectByIndex(i) && positionInfo.Symbol() == symbol)
+        {
+            totalCommission += positionInfo.Commission();
+        }
+    }
+
+    return totalCommission;
+}
+
+// Fungsi untuk mendapatkan total margin yang digunakan oleh semua posisi terbuka untuk simbol tertentu
+double GetTotalMarginForSymbol(const string symbol)
+{
+    CPositionInfo positionInfo;
+    double totalMargin = 0.0;
+    int totalPositions = PositionsTotal();
+
+    for (int i = 0; i < totalPositions; i++)
+    {
+        if (positionInfo.SelectByIndex(i) && positionInfo.Symbol() == symbol)
+        {
+            totalMargin += positionInfo.Margin();
+        }
+    }
+
+    return totalMargin;
+}
+
+// Fungsi untuk mendapatkan tipe posisi (buy/sell) dari posisi pertama yang ditemukan untuk simbol tertentu
+ENUM_POSITION_TYPE GetPositionTypeForSymbol(const string symbol)
+{
+    CPositionInfo positionInfo;
+
+    if (positionInfo.Select(symbol))
+    {
+        return positionInfo.Type();
+    }
+
+    return WRONG_VALUE; // Mengembalikan WRONG_VALUE jika tidak ada posisi untuk simbol tersebut
+}
+
+// Fungsi untuk mendapatkan waktu pembukaan posisi terakhir untuk simbol tertentu
+datetime GetLastPositionOpenTimeForSymbol(const string symbol)
+{
+    CPositionInfo positionInfo;
+    datetime lastOpenTime = 0;
+    int totalPositions = PositionsTotal();
+
+    for (int i = 0; i < totalPositions; i++)
+    {
+        if (positionInfo.SelectByIndex(i) && positionInfo.Symbol() == symbol)
+        {
+            datetime openTime = positionInfo.Time();
+            if (openTime > lastOpenTime)
+            {
+                lastOpenTime = openTime;
+            }
+        }
+    }
+
+    return lastOpenTime;
+}
+
+// Fungsi untuk mendapatkan ticket ID dari posisi pertama yang ditemukan untuk simbol tertentu
+ulong GetFirstPositionTicketForSymbol(const string symbol)
+{
+    CPositionInfo positionInfo;
+
+    if (positionInfo.Select(symbol))
+    {
+        return positionInfo.Ticket();
+    }
+
+    return 0; // Mengembalikan 0 jika tidak ada posisi untuk simbol tersebut
+}
+
+// Contoh penggunaan fungsi-fungsi tambahan
+void OnStart()
+{
+    string symbol = "EURUSD";
+
+    double totalSwap = GetTotalSwapForSymbol(symbol);
+    double totalCommission = GetTotalCommissionForSymbol(symbol);
+    double totalMargin = GetTotalMarginForSymbol(symbol);
+    ENUM_POSITION_TYPE positionType = GetPositionTypeForSymbol(symbol);
+    datetime lastOpenTime = GetLastPositionOpenTimeForSymbol(symbol);
+    ulong firstTicket = GetFirstPositionTicketForSymbol(symbol);
+
+    Print("Total Swap for ", symbol, ": ", totalSwap);
+    Print("Total Commission for ", symbol, ": ", totalCommission);
+    Print("Total Margin for ", symbol, ": ", totalMargin);
+    Print("Position Type for ", symbol, ": ", EnumToString(positionType));
+    Print("Last Position Open Time for ", symbol, ": ", lastOpenTime);
+    Print("First Position Ticket for ", symbol, ": ", firstTicket);
+}
+    string symbol = "EURUSD";
+
+    double totalSwap = GetTotalSwapForSymbol(symbol);
+    double totalCommission = GetTotalCommissionForSymbol(symbol);
+    double totalMargin = GetTotalMarginForSymbol(symbol);
+    ENUM_POSITION_TYPE positionType = GetPositionTypeForSymbol(symbol);
+    datetime lastOpenTime = GetLastPositionOpenTimeForSymbol(symbol);
+    ulong firstTicket = GetFirstPositionTicketForSymbol(symbol);
+
+    Print("Total Swap for ", symbol, ": ", totalSwap);
+    Print("Total Commission for ", symbol, ": ", totalCommission);
+    Print("Total Margin for ", symbol, ": ", totalMargin);
+    Print("Position Type for ", symbol, ": ", EnumToString(positionType));
+    Print("Last Position Open Time for ", symbol, ": ", lastOpenTime);
+    Print("First Position Ticket for ", symbol, ": ", firstTicket);
+}
