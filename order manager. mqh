@@ -289,3 +289,284 @@ private:
         return OrderSend(request, result);
     }
 };
+
+// Implementation of the grid strategy methods
+bool OpenGeometricBuyGrid() {
+    int currentPositions = GetTotalBuyPositions();
+    if(currentPositions >= m_maxGridLevels) return false;
+    
+    double lastPrice = GetLastBuyPrice();
+    double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+    
+    // For first position
+    if(currentPositions == 0) {
+        return OpenPositionWithLot(ORDER_TYPE_BUY, m_lotSize);
+    }
+    
+    // Check if price moved enough for next grid level
+    double gridDistance = m_gridStep * MathPow(m_gridMultiplier, currentPositions - 1) * Point();
+    if(currentPrice <= lastPrice - gridDistance) {
+        double nextLot = m_lotSize * MathPow(m_gridMultiplier, currentPositions);
+        return OpenPositionWithLot(ORDER_TYPE_BUY, nextLot);
+    }
+    
+    return false;
+}
+
+bool OpenFibonacciBuyGrid() {
+    int currentPositions = GetTotalBuyPositions();
+    if(currentPositions >= m_maxGridLevels) return false;
+    
+    double lastPrice = GetLastBuyPrice();
+    double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+    
+    // Calculate Fibonacci multiplier
+    double fibo = GetFibonacciMultiplier(currentPositions);
+    
+    // For first position
+    if(currentPositions == 0) {
+        return OpenPositionWithLot(ORDER_TYPE_BUY, m_lotSize);
+    }
+    
+    // Check if price moved enough for next grid level
+    double gridDistance = m_gridStep * fibo * Point();
+    if(currentPrice <= lastPrice - gridDistance) {
+        double nextLot = m_lotSize * fibo;
+        return OpenPositionWithLot(ORDER_TYPE_BUY, nextLot);
+    }
+    
+    return false;
+}
+
+bool OpenDynamicBuyGrid() {
+    int currentPositions = GetTotalBuyPositions();
+    if(currentPositions >= m_maxGridLevels) return false;
+    
+    double lastPrice = GetLastBuyPrice();
+    double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+    double atr = CalculateATR(14); // 14-period ATR
+    
+    // For first position
+    if(currentPositions == 0) {
+        return OpenPositionWithLot(ORDER_TYPE_BUY, m_lotSize);
+    }
+    
+    // Dynamic grid step based on ATR
+    double dynamicStep = atr * m_gridMultiplier;
+    if(currentPrice <= lastPrice - dynamicStep) {
+        double volatilityRatio = atr / (m_gridStep * Point());
+        double nextLot = m_lotSize * MathPow(m_gridMultiplier, currentPositions) * volatilityRatio;
+        nextLot = MathMin(nextLot, m_pyramidMaxLot); // Limit maximum lot size
+        
+        return OpenPositionWithLot(ORDER_TYPE_BUY, nextLot);
+    }
+    
+    return false;
+}
+
+// Helper methods for grid calculations
+double GetFibonacciMultiplier(int level) {
+    if(level <= 1) return 1.0;
+    
+    double fibo1 = 1.0;
+    double fibo2 = 1.0;
+    double fiboN = 1.0;
+    
+    for(int i = 2; i <= level; i++) {
+        fiboN = fibo1 + fibo2;
+        fibo1 = fibo2;
+        fibo2 = fiboN;
+    }
+    
+    return fiboN;
+}
+
+double CalculateATR(int period) {
+    double atr = 0.0;
+    MqlRates rates[];
+    ArraySetAsSeries(rates, true);
+    
+    if(CopyRates(m_symbol, PERIOD_CURRENT, 0, period + 1, rates) > 0) {
+        double tr = 0.0;
+        for(int i = 0; i < period; i++) {
+            double high = rates[i].high;
+            double low = rates[i].low;
+            double prevClose = rates[i + 1].close;
+            
+            tr += MathMax(high - low, MathMax(MathAbs(high - prevClose), MathAbs(low - prevClose)));
+        }
+        atr = tr / period;
+    }
+    
+    return atr;
+}
+
+// Implementation of advanced position management
+bool ManageGridPositions() {
+    if(!CheckGridProfitTarget()) {
+        if(IsVolatilityHigh()) {
+            CloseAllGridPositions();
+            return true;
+        }
+        
+        if(ShouldAdjustGridLevels()) {
+            AdjustGridLevels();
+        }
+    }
+    
+    return UpdateGridStopLevels();
+}
+
+bool CheckGridProfitTarget() {
+    double totalProfit = 0.0;
+    double totalVolume = 0.0;
+    
+    for(int i = PositionsTotal() - 1; i >= 0; i--) {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+               PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                totalProfit += PositionGetDouble(POSITION_PROFIT);
+                totalVolume += PositionGetDouble(POSITION_VOLUME);
+            }
+        }
+    }
+    
+    double averageProfit = totalVolume > 0 ? totalProfit / totalVolume : 0;
+    return averageProfit >= m_minProfit * Point();
+}
+
+bool IsVolatilityHigh() {
+    double atr = CalculateATR(14);
+    double averageATR = CalculateAverageATR(14, 5); // 5-period average of 14-period ATR
+    
+    return atr > averageATR * 1.5; // Volatility is 50% higher than average
+}
+
+double CalculateAverageATR(int atrPeriod, int avgPeriod) {
+    double sum = 0.0;
+    for(int i = 0; i < avgPeriod; i++) {
+        sum += CalculateATR(atrPeriod);
+    }
+    return sum / avgPeriod;
+}
+
+bool ShouldAdjustGridLevels() {
+    int positions = GetTotalPositions();
+    if(positions <= 1) return false;
+    
+    double averageDistance = GetAverageGridDistance();
+    double currentVolatility = CalculateATR(14);
+    
+    // Adjust if grid distance is too small compared to volatility
+    return averageDistance < currentVolatility * 0.5;
+}
+
+double GetAverageGridDistance() {
+    double totalDistance = 0.0;
+    int count = 0;
+    double lastPrice = 0.0;
+    
+    for(int i = PositionsTotal() - 1; i >= 0; i--) {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+               PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                double price = PositionGetDouble(POSITION_PRICE_OPEN);
+                if(lastPrice > 0) {
+                    totalDistance += MathAbs(price - lastPrice);
+                    count++;
+                }
+                lastPrice = price;
+            }
+        }
+    }
+    
+    return count > 0 ? totalDistance / count : 0;
+}
+
+bool AdjustGridLevels() {
+    double currentVolatility = CalculateATR(14);
+    m_gridStep = currentVolatility / Point() * 0.5; // Set grid step to half of ATR
+    
+    return ModifyGridPositions();
+}
+
+bool ModifyGridPositions() {
+    bool success = true;
+    double basePrice = GetAverageEntryPrice();
+    
+    for(int i = PositionsTotal() - 1; i >= 0; i--) {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+               PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                double sl = CalculateGridStopLoss(basePrice, PositionGetInteger(POSITION_TYPE));
+                double tp = CalculateGridTakeProfit(basePrice, PositionGetInteger(POSITION_TYPE));
+                
+                success &= ModifyPosition(ticket, sl, tp);
+            }
+        }
+    }
+    
+    return success;
+}
+
+double GetAverageEntryPrice() {
+    double totalVolume = 0.0;
+    double volumePrice = 0.0;
+    
+    for(int i = PositionsTotal() - 1; i >= 0; i--) {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+               PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                double volume = PositionGetDouble(POSITION_VOLUME);
+                totalVolume += volume;
+                volumePrice += volume * PositionGetDouble(POSITION_PRICE_OPEN);
+            }
+        }
+    }
+    
+    return totalVolume > 0 ? volumePrice / totalVolume : 0;
+}
+
+double CalculateGridStopLoss(double basePrice, int positionType) {
+    double atr = CalculateATR(14);
+    double stopDistance = atr * 2; // 2 ATR stop loss
+    
+    return positionType == POSITION_TYPE_BUY ? 
+        basePrice - stopDistance : 
+        basePrice + stopDistance;
+}
+
+double CalculateGridTakeProfit(double basePrice, int positionType) {
+    double atr = CalculateATR(14);
+    double profitDistance = atr * 3; // 3 ATR take profit
+    
+    return positionType == POSITION_TYPE_BUY ? 
+        basePrice + profitDistance : 
+        basePrice - profitDistance;
+}
+
+bool UpdateGridStopLevels() {
+    if(!HasOpenPositions()) return true;
+    
+    double basePrice = GetAverageEntryPrice();
+    double atr = CalculateATR(14);
+    
+    return ModifyGridPositions();
+}
+
+bool HasOpenPositions() {
+    for(int i = PositionsTotal() - 1; i >= 0; i--) {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+               PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
