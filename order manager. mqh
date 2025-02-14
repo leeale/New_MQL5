@@ -1,0 +1,291 @@
+class OrderManager {
+private:
+    string          m_symbol;
+    ENUM_SIGNAL     m_signal;
+    double          m_lotSize;
+    int             m_slippage;
+    double          m_stopLoss;
+    double          m_takeProfit;
+    int             m_magicNumber;
+    
+    // Additional grid parameters
+    double          m_gridStep;         // Grid step in points
+    double          m_gridMultiplier;   // Lot multiplier for grid
+    int             m_maxGridLevels;    // Maximum grid levels
+    double          m_minProfit;        // Minimum profit to close grid
+    
+public:
+    // Constructor with grid parameters
+    OrderManager(string symbol = NULL, double gridStep = 200, double gridMultiplier = 1.5, int maxLevels = 5) {
+        m_symbol = symbol == NULL ? Symbol() : symbol;
+        m_signal = SIGNAL_NONE;
+        m_lotSize = 0.1;
+        m_slippage = 3;
+        m_stopLoss = 100;
+        m_takeProfit = 200;
+        m_magicNumber = 123456;
+        
+        m_gridStep = gridStep;
+        m_gridMultiplier = gridMultiplier;
+        m_maxGridLevels = maxLevels;
+        m_minProfit = 50;  // Default 50 points profit
+    }
+    
+    // Grid Trading Methods
+    bool OpenBuyGrid() {
+        if(GetTotalBuyPositions() >= m_maxGridLevels) return false;
+        
+        double lastBuyPrice = GetLastBuyPrice();
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+        double nextLot = CalculateNextGridLot(ORDER_TYPE_BUY);
+        
+        if(lastBuyPrice == 0 || currentPrice <= lastBuyPrice - m_gridStep * Point()) {
+            MqlTradeRequest request = {};
+            request.action = TRADE_ACTION_DEAL;
+            request.symbol = m_symbol;
+            request.volume = nextLot;
+            request.type = ORDER_TYPE_BUY;
+            request.price = currentPrice;
+            request.deviation = m_slippage;
+            request.magic = m_magicNumber;
+            request.comment = "Grid Buy Level " + IntegerToString(GetTotalBuyPositions() + 1);
+            
+            MqlTradeResult result = {};
+            return OrderSend(request, result);
+        }
+        return false;
+    }
+    
+    bool OpenSellGrid() {
+        if(GetTotalSellPositions() >= m_maxGridLevels) return false;
+        
+        double lastSellPrice = GetLastSellPrice();
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        double nextLot = CalculateNextGridLot(ORDER_TYPE_SELL);
+        
+        if(lastSellPrice == 0 || currentPrice >= lastSellPrice + m_gridStep * Point()) {
+            MqlTradeRequest request = {};
+            request.action = TRADE_ACTION_DEAL;
+            request.symbol = m_symbol;
+            request.volume = nextLot;
+            request.type = ORDER_TYPE_SELL;
+            request.price = currentPrice;
+            request.deviation = m_slippage;
+            request.magic = m_magicNumber;
+            request.comment = "Grid Sell Level " + IntegerToString(GetTotalSellPositions() + 1);
+            
+            MqlTradeResult result = {};
+            return OrderSend(request, result);
+        }
+        return false;
+    }
+    
+    // Martingale Methods
+    bool OpenBuyMartingale() {
+        double lastLoss = GetLastClosedLoss();
+        if(lastLoss < 0) {
+            double newLot = m_lotSize * m_gridMultiplier;
+            return OpenPositionWithLot(ORDER_TYPE_BUY, newLot);
+        }
+        return OpenPositionWithLot(ORDER_TYPE_BUY, m_lotSize);
+    }
+    
+    bool OpenSellMartingale() {
+        double lastLoss = GetLastClosedLoss();
+        if(lastLoss < 0) {
+            double newLot = m_lotSize * m_gridMultiplier;
+            return OpenPositionWithLot(ORDER_TYPE_SELL, newLot);
+        }
+        return OpenPositionWithLot(ORDER_TYPE_SELL, m_lotSize);
+    }
+    
+    // Anti-Martingale Methods
+    bool OpenBuyAntiMartingale() {
+        double lastProfit = GetLastClosedProfit();
+        if(lastProfit > 0) {
+            double newLot = m_lotSize * m_gridMultiplier;
+            return OpenPositionWithLot(ORDER_TYPE_BUY, newLot);
+        }
+        return OpenPositionWithLot(ORDER_TYPE_BUY, m_lotSize);
+    }
+    
+    bool OpenSellAntiMartingale() {
+        double lastProfit = GetLastClosedProfit();
+        if(lastProfit > 0) {
+            double newLot = m_lotSize * m_gridMultiplier;
+            return OpenPositionWithLot(ORDER_TYPE_SELL, newLot);
+        }
+        return OpenPositionWithLot(ORDER_TYPE_SELL, m_lotSize);
+    }
+    
+    // Hedging Methods
+    bool OpenHedgePosition() {
+        double totalBuyVolume = GetTotalBuyVolume();
+        double totalSellVolume = GetTotalSellVolume();
+        
+        if(totalBuyVolume > totalSellVolume) {
+            return OpenPositionWithLot(ORDER_TYPE_SELL, totalBuyVolume - totalSellVolume);
+        }
+        else if(totalSellVolume > totalBuyVolume) {
+            return OpenPositionWithLot(ORDER_TYPE_BUY, totalSellVolume - totalBuyVolume);
+        }
+        return false;
+    }
+    
+    // Recovery Methods
+    bool OpenRecoveryPosition() {
+        double totalLoss = GetTotalFloatingLoss();
+        if(totalLoss < 0) {
+            double recoveryLot = MathAbs(totalLoss) / (m_stopLoss * Point());
+            return OpenPositionWithLot(ORDER_TYPE_BUY, recoveryLot);
+        }
+        return false;
+    }
+    
+    // Position Management Methods
+    double GetTotalBuyVolume() {
+        double volume = 0;
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+                    volume += PositionGetDouble(POSITION_VOLUME);
+                }
+            }
+        }
+        return volume;
+    }
+    
+    double GetTotalSellVolume() {
+        double volume = 0;
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL) {
+                    volume += PositionGetDouble(POSITION_VOLUME);
+                }
+            }
+        }
+        return volume;
+    }
+    
+    int GetTotalBuyPositions() {
+        int count = 0;
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+    
+    int GetTotalSellPositions() {
+        int count = 0;
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+    
+private:
+    double GetLastBuyPrice() {
+        double price = 0;
+        datetime lastTime = 0;
+        
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+                    datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+                    if(openTime > lastTime) {
+                        price = PositionGetDouble(POSITION_PRICE_OPEN);
+                        lastTime = openTime;
+                    }
+                }
+            }
+        }
+        return price;
+    }
+    
+    double GetLastSellPrice() {
+        double price = 0;
+        datetime lastTime = 0;
+        
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL) {
+                    datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+                    if(openTime > lastTime) {
+                        price = PositionGetDouble(POSITION_PRICE_OPEN);
+                        lastTime = openTime;
+                    }
+                }
+            }
+        }
+        return price;
+    }
+    
+    double CalculateNextGridLot(ENUM_ORDER_TYPE type) {
+        int positions = (type == ORDER_TYPE_BUY) ? GetTotalBuyPositions() : GetTotalSellPositions();
+        return m_lotSize * MathPow(m_gridMultiplier, positions);
+    }
+    
+    double GetLastClosedLoss() {
+        // Implementation for getting last closed loss
+        // This would require history access
+        return 0;
+    }
+    
+    double GetLastClosedProfit() {
+        // Implementation for getting last closed profit
+        // This would require history access
+        return 0;
+    }
+    
+    double GetTotalFloatingLoss() {
+        double totalLoss = 0;
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol) {
+                    double profit = PositionGetDouble(POSITION_PROFIT);
+                    if(profit < 0) totalLoss += profit;
+                }
+            }
+        }
+        return totalLoss;
+    }
+    
+    bool OpenPositionWithLot(ENUM_ORDER_TYPE type, double lot) {
+        double price = (type == ORDER_TYPE_BUY) ? 
+            SymbolInfoDouble(m_symbol, SYMBOL_ASK) : 
+            SymbolInfoDouble(m_symbol, SYMBOL_BID);
+            
+        MqlTradeRequest request = {};
+        request.action = TRADE_ACTION_DEAL;
+        request.symbol = m_symbol;
+        request.volume = lot;
+        request.type = type;
+        request.price = price;
+        request.deviation = m_slippage;
+        request.magic = m_magicNumber;
+        
+        MqlTradeResult result = {};
+        return OrderSend(request, result);
+    }
+};
