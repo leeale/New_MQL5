@@ -570,3 +570,312 @@ bool HasOpenPositions() {
     }
     return false;
 }
+
+
+class OrderManager {
+private:
+    string          m_symbol;
+    double          m_lotSize;
+    int             m_slippage;
+    double          m_stopLoss;
+    double          m_takeProfit;
+    int             m_magicNumber;
+    
+    // Grid parameters
+    double          m_gridStep;
+    double          m_gridMultiplier;
+    int             m_maxGridLevels;
+    double          m_minProfit;
+    
+    // Pyramiding parameters
+    double          m_pyramidStep;
+    double          m_pyramidMaxLot;
+    int             m_pyramidMaxLevels;
+    
+    // Breakeven parameters
+    double          m_breakEvenProfit;
+    double          m_breakEvenPadding;
+    
+    // Trailing parameters
+    double          m_trailingStart;
+    double          m_trailingStep;
+    
+    // DCA parameters
+    double          m_dcaMultiplier;
+    double          m_dcaStep;
+    int             m_dcaMaxLevels;
+    
+public:
+    // Constructor with extended parameters
+    OrderManager(string symbol = NULL) {
+        m_symbol = symbol == NULL ? Symbol() : symbol;
+        m_lotSize = 0.1;
+        m_slippage = 3;
+        m_stopLoss = 100;
+        m_takeProfit = 200;
+        m_magicNumber = 123456;
+        
+        // Initialize grid parameters
+        m_gridStep = 200;
+        m_gridMultiplier = 1.5;
+        m_maxGridLevels = 5;
+        m_minProfit = 50;
+        
+        // Initialize pyramiding parameters
+        m_pyramidStep = 100;
+        m_pyramidMaxLot = 1.0;
+        m_pyramidMaxLevels = 3;
+        
+        // Initialize breakeven parameters
+        m_breakEvenProfit = 100;
+        m_breakEvenPadding = 10;
+        
+        // Initialize trailing parameters
+        m_trailingStart = 100;
+        m_trailingStep = 20;
+        
+        // Initialize DCA parameters
+        m_dcaMultiplier = 2.0;
+        m_dcaStep = 100;
+        m_dcaMaxLevels = 3;
+    }
+    
+    // Advanced Grid Methods
+    bool OpenBuyGridAdvanced(ENUM_GRID_TYPE gridType) {
+        switch(gridType) {
+            case GRID_GEOMETRIC:
+                return OpenGeometricBuyGrid();
+            case GRID_ARITHMETIC:
+                return OpenArithmeticBuyGrid();
+            case GRID_FIBONACCI:
+                return OpenFibonacciBuyGrid();
+            case GRID_DYNAMIC:
+                return OpenDynamicBuyGrid();
+            default:
+                return false;
+        }
+    }
+    
+    bool OpenSellGridAdvanced(ENUM_GRID_TYPE gridType) {
+        switch(gridType) {
+            case GRID_GEOMETRIC:
+                return OpenGeometricSellGrid();
+            case GRID_ARITHMETIC:
+                return OpenArithmeticSellGrid();
+            case GRID_FIBONACCI:
+                return OpenFibonacciSellGrid();
+            case GRID_DYNAMIC:
+                return OpenDynamicSellGrid();
+            default:
+                return false;
+        }
+    }
+    
+    // Pyramiding Methods
+    bool OpenBuyPyramid() {
+        if(GetTotalBuyPositions() >= m_pyramidMaxLevels) return false;
+        
+        double lastBuyPrice = GetLastBuyPrice();
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+        double totalLot = GetTotalBuyVolume();
+        
+        if(totalLot >= m_pyramidMaxLot) return false;
+        
+        if(currentPrice > lastBuyPrice + m_pyramidStep * Point()) {
+            double nextLot = CalculatePyramidLot();
+            return OpenPositionWithLot(ORDER_TYPE_BUY, nextLot);
+        }
+        return false;
+    }
+    
+    bool OpenSellPyramid() {
+        if(GetTotalSellPositions() >= m_pyramidMaxLevels) return false;
+        
+        double lastSellPrice = GetLastSellPrice();
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        double totalLot = GetTotalSellVolume();
+        
+        if(totalLot >= m_pyramidMaxLot) return false;
+        
+        if(currentPrice < lastSellPrice - m_pyramidStep * Point()) {
+            double nextLot = CalculatePyramidLot();
+            return OpenPositionWithLot(ORDER_TYPE_SELL, nextLot);
+        }
+        return false;
+    }
+    
+    // DCA (Dollar Cost Averaging) Methods
+    bool OpenBuyDCA() {
+        if(GetTotalBuyPositions() >= m_dcaMaxLevels) return false;
+        
+        double lastBuyPrice = GetLastBuyPrice();
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+        
+        if(currentPrice < lastBuyPrice - m_dcaStep * Point()) {
+            double nextLot = CalculateDCALot(ORDER_TYPE_BUY);
+            return OpenPositionWithLot(ORDER_TYPE_BUY, nextLot);
+        }
+        return false;
+    }
+    
+    bool OpenSellDCA() {
+        if(GetTotalSellPositions() >= m_dcaMaxLevels) return false;
+        
+        double lastSellPrice = GetLastSellPrice();
+        double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+        
+        if(currentPrice > lastSellPrice + m_dcaStep * Point()) {
+            double nextLot = CalculateDCALot(ORDER_TYPE_SELL);
+            return OpenPositionWithLot(ORDER_TYPE_SELL, nextLot);
+        }
+        return false;
+    }
+    
+    // Position Management Methods
+    bool ModifyBreakEven() {
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                    
+                    double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                    double currentPrice = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                        SymbolInfoDouble(m_symbol, SYMBOL_BID) : 
+                        SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+                    
+                    double profit = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                        currentPrice - openPrice : 
+                        openPrice - currentPrice;
+                    
+                    if(profit >= m_breakEvenProfit * Point()) {
+                        double newSL = openPrice + (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                            m_breakEvenPadding * Point() : 
+                            -m_breakEvenPadding * Point());
+                            
+                        ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    
+    bool ModifyTrailingStop() {
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                    
+                    double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                    double currentPrice = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                        SymbolInfoDouble(m_symbol, SYMBOL_BID) : 
+                        SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+                    
+                    double profit = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                        currentPrice - openPrice : 
+                        openPrice - currentPrice;
+                    
+                    if(profit >= m_trailingStart * Point()) {
+                        double newSL = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                            currentPrice - m_trailingStep * Point() : 
+                            currentPrice + m_trailingStep * Point();
+                            
+                        if(PositionGetDouble(POSITION_SL) == 0 || 
+                           (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY && newSL > PositionGetDouble(POSITION_SL)) ||
+                           (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL && newSL < PositionGetDouble(POSITION_SL))) {
+                            ModifyPosition(ticket, newSL, PositionGetDouble(POSITION_TP));
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    
+    bool ClosePartialPosition(double percentageToClose) {
+        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == m_symbol && 
+                   PositionGetInteger(POSITION_MAGIC) == m_magicNumber) {
+                    
+                    double volume = PositionGetDouble(POSITION_VOLUME);
+                    double closeVolume = volume * percentageToClose;
+                    
+                    MqlTradeRequest request = {};
+                    request.action = TRADE_ACTION_DEAL;
+                    request.position = ticket;
+                    request.symbol = m_symbol;
+                    request.volume = closeVolume;
+                    request.type = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                        ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+                    request.price = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                        SymbolInfoDouble(m_symbol, SYMBOL_BID) : 
+                        SymbolInfoDouble(m_symbol, SYMBOL_ASK);
+                    request.deviation = m_slippage;
+                    
+                    MqlTradeResult result = {};
+                    return OrderSend(request, result);
+                }
+            }
+        }
+        return false;
+    }
+    
+    // Grid Calculation Methods
+private:
+    enum ENUM_GRID_TYPE {
+        GRID_GEOMETRIC,
+        GRID_ARITHMETIC,
+        GRID_FIBONACCI,
+        GRID_DYNAMIC
+    };
+    
+    bool OpenGeometricBuyGrid() {
+        // Implementation for geometric progression grid
+        return false;
+    }
+    
+    bool OpenArithmeticBuyGrid() {
+        // Implementation for arithmetic progression grid
+        return false;
+    }
+    
+    bool OpenFibonacciBuyGrid() {
+        // Implementation for Fibonacci-based grid
+        return false;
+    }
+    
+    bool OpenDynamicBuyGrid() {
+        // Implementation for dynamic grid based on volatility
+        return false;
+    }
+    
+    // Similar implementations for sell grids...
+    
+    double CalculatePyramidLot() {
+        int positions = GetTotalBuyPositions() + GetTotalSellPositions();
+        return m_lotSize * (1.0 + positions * 0.5);
+    }
+    
+    double CalculateDCALot(ENUM_ORDER_TYPE type) {
+        int positions = (type == ORDER_TYPE_BUY) ? GetTotalBuyPositions() : GetTotalSellPositions();
+        return m_lotSize * MathPow(m_dcaMultiplier, positions);
+    }
+    
+    bool ModifyPosition(ulong ticket, double sl, double tp) {
+        MqlTradeRequest request = {};
+        request.action = TRADE_ACTION_MODIFY;
+        request.position = ticket;
+        request.symbol = m_symbol;
+        request.sl = sl;
+        request.tp = tp;
+        
+        MqlTradeResult result = {};
+        return OrderSend(request, result);
+    }
+    
+    // Other helper methods remain the same...
+};
